@@ -1,5 +1,5 @@
 # Use Ubuntu 24.04 as the base image
-FROM ubuntu:24.04
+FROM ubuntu:24.04 AS openssl-builder
 
 # Prevent interactive prompts during package installs
 ENV DEBIAN_FRONTEND=noninteractive
@@ -46,15 +46,21 @@ RUN ./Configure enable-fips --prefix=/usr/local/openssl-3.4 --openssldir=/usr/lo
     make -s -j$(nproc) && \
     make install 1> /dev/null
 
+FROM ubuntu:24.04
+
+# Copy compiled openssl from builder
+COPY --from=openssl-builder /usr/local/openssl-3.4/ /usr/local/openssl-3.4/  
+
 # Update the OpenSSL configuration file with our custom configuration file
-RUN cp /usr/local/src/openssl_cnf /usr/local/openssl-3.4/ssl/openssl.cnf
+COPY --from=openssl-builder /usr/local/src/openssl_cnf /usr/local/openssl-3.4/ssl/openssl.cnf
+
+# Copy default openssl.cnf
+COPY --from=openssl-builder /etc/ssl/openssl.cnf /etc/ssl/openssl.cnf
 
 # Update dynamic linker configuration so the new OpenSSL libraries are found
 RUN echo "/usr/local/openssl-3.4/lib" > /etc/ld.so.conf.d/openssl-3.4.conf && ldconfig
 
 # Set environment variables so that the new OpenSSL version is prioritized
-ENV LD_LIBRARY_PATH="/usr/local/openssl-3.4/lib:${LD_LIBRARY_PATH}"
-ENV PATH="/usr/local/openssl-3.4/bin:${PATH}"
 ENV OPENSSL_CONF="/usr/local/openssl-3.4/ssl/openssl.cnf"
 
 # Update root's .bashrc so that interactive shells also load these variables
@@ -81,21 +87,6 @@ RUN [ -f /etc/ssl/openssl.cnf ] && mv /etc/ssl/openssl.cnf /etc/ssl/openssl.cnf.
 # so the build doesn't fail if verification fails.
 RUN openssl version -a || true && \
     openssl list -providers || true
-
-RUN apt-get purge -y \
-    build-essential \
-    gcc \
-    make \
-    g++ \
-    autoconf \
-    automake \
-    libtool \
-    zlib1g-dev \
-    perl \
-    git && \
-    apt-get autoremove -y && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
 
 # Use bash as the default shell
 CMD ["/bin/bash"]
